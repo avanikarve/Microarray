@@ -1,0 +1,526 @@
+---
+title: "Microarray_Assignment"
+author: "Avani Karve & Siddharth Sinnarkar"
+date: "2025-04-26"
+output: word_document
+---
+
+
+# Brain Cancer Dataset overview:
+
+Brain cancer, or more accurately brain tumors can be broadly classified into 2 types - benign (non-cancerous) and malignant (cancerous). 
+Our dataset contains data pertaining to the following 4 types of brain cancers:
+
+1. **Ependymoma:** It is a rare type of brain cancer which originates from cells lining the ventricles of the brain. It can be benign or malignant
+
+2. **Gliobastoma:** It is a fast-growing, aggressive brain tumor and is the most common primary (originating in the brain) malignant brain cancer in adults. It develops from glial cells, which are the supporting cells of the brain and spinal cord.
+
+3. **Medulloblastoma:** It is a malignant brain cancer that develops in the cerebellum (the part of the brain responsible for balance and co-ordination). It is the most common malignant brain cancer in children.
+
+4. **Pilocytic Astrocytoma:** It is a slow-growing benign brain cancer, often found in the cerebellum (the part of the brain responsible for balance and co-ordination) that typically affects children and young adults. It is considered as highly treatable, with a high cure rate. It originates from astrocytes, the star-shaped cells that support and nourish neurons in the brain.
+
+
+# Microarray Dataset: 
+
+A single channel microarray dataset consists of gene expression values for healthy and diseased group/s of individuals.
+Gene expression value for a particular gene essentially gives us the amount of protein synthesized by that particular gene. If we compare the gene expression values for healthy individuals with that of diseased individuals, we can find the specific gene/s whose hypo-expression or hyper-expression results in the underlying disease.
+
+
+# Introduction
+
+Suppose, we are given the gene expression values of a particular individual and we want to check if this individual is susceptible to brain cancer. 
+How can we proceed? First, we'll need to locate or determine the genes that are responsible for causing brain cancer/tumor.
+Consider the following microarray dataset that contains gene expression values of 54675 genes of 130 individuals (13 healthy individuals and 117 ( = 46 + 34 + 22 + 15) individuals with the above four types of cancer (respectively).
+
+*Note*: We will be treating the set of gene expression values for each individual as an independent observation, and gene expression values will be treated as a variable.
+Different types of cancer will be treated as different groups. So in all, we will have 5 groups/treatments. 
+
+```{r}
+data = read.csv("D:\\MSc Statistics SPPU\\SEM II\\Microarray\\Assignments\\Clean_Brain_5C.csv", row.names = 1)
+dim(data)   # to ensure that the entire data is loaded properly
+```
+```{r, echo = FALSE}
+cn1 = paste("E", 1:46, sep= "")
+cn2 = paste("G", 1:34, sep= "")
+cn3 = paste("M", 1:22, sep= "")
+cn4 = paste("N", 1:13, sep= "")
+cn5 = paste("P", 1:15, sep= "")
+cn = c(cn1, cn2, cn3, cn4, cn5)
+
+colnames(data) = cn
+rn = rownames(data)
+```
+
+# Data Preprocessing: 
+
+Usually, gene expression values are in the range 0 to 2^16. But handling values with such vast range is a difficult task. So, in order to shrink this range (to 0 to 16), we log transform the data with base 2. However, it is recommended to check if our data is already log transformed or not. 
+
+```{r}
+range(data)
+```
+
+In our case, our gene expression values are in the required range. So here, we do not need to perform log transformation.
+
+In Microarray Data Analysis, we have 2 main assumptions:
+
+1) Number of hyper expressed genes and number of hypo expressed genes is approximately same.
+
+2) Only a few hundred genes are differently expressed. As a result of this, the distribution of every observation is approximately same.
+
+In order to ensure that the required assumptions are satisfied, we normalize our data (i.e. in some sense, we make the distribution of all variables the same). However, while performing analysis, we shall check if our data is already normalized. This can be done using Concordance Coefficient. 
+Concordance Coefficient, $\rho$ is given by 
+$$
+\rho = \frac{2 \cdot \text{Cov}(X, Y)}{\text{Var}(X) + \text{Var}(Y) + (\mu_X - \mu_Y)^2}
+$$
+
+We compute concordance coefficient for all observation pairs. If all these coefficient values are greater than 0.9, then we can safely assume that our data is normalized. 
+
+```{r, echo = FALSE}
+# Normalization
+LD = as.matrix(data)
+colnames(LD) = colnames(data)
+rownames(LD) = rownames(data)
+# Concordance Coefficient
+ConMat=matrix(nrow=130,ncol=130)
+for(i in 1:130)
+{
+  for(j in 1:130)
+  {
+    ConMat[i,j]=2*cov(LD[,i],LD[,j])/(var(LD[,i])+var(LD[,j])+(mean(LD[,i])-mean(LD[,j]))^2)
+  }
+}
+```
+```{r}
+print(min(ConMat))
+```
+In our case, the minimum value of concordance coefficient is 0.742. Hence, we will perform normalization.
+
+```{r, echo = FALSE}
+# Quantile Normalization
+QuantNorm=function(D)
+{
+  SD=apply(D,2,sort)
+  MockArr=rowMeans(SD)
+  p=ncol(D)
+  OrdMat=apply(D,2,order)
+  QND=matrix(nrow=nrow(D),ncol=ncol(D))
+  for(i in 1:p)
+  {
+    QND[OrdMat[,i],i]=MockArr  
+  }
+  return(QND)  
+}
+
+QD = QuantNorm(LD)
+colnames(QD) = colnames(LD)
+rownames(QD) = rownames(LD)
+r=rownames(QD)
+```
+```{r}
+boxplot(QD, main = "Box Plot of Quantile Normalized Data",
+        ylab = "Gene Expression Value", xlab = "Observations")
+```
+
+As we can see, all the Box plots now look the same. We have successfully carried out normalization. Let us see the Box plot for one observation to get a better understanding.
+
+```{r}
+boxplot(QD[,1], main = "Boxplot for first observation", ylab = "Gene Expression Value", xlab = "Observation 1")
+```
+
+Observe that the gene expression values for all the outliers lie on one side of the Boxplot.
+Now, that our data is in the required format, we can proceed to analysis.
+
+# Inference Procedures:
+
+Our job is to find a set of biomarkers (i.e. differently expressed genes) and see how their gene expression is related to developing brain cancer.
+Inference procedures help us in identifying these biomarkers.
+Basically, we want to test whether the average gene expression value for each group is same. 
+We perform a few tests as per the following tree diagram:
+
+```{r include_flowchart, echo=FALSE, out.width="100%"}
+knitr::include_graphics("D:/MSc Statistcs SPPU/SEM II/Microarray/Assignments/flowchart.jpg")
+```
+
+```{r, echo = FALSE}
+# Inference - ANOVA
+
+# Shapiro test 
+ng = nrow(QD)
+alpha = 0.05
+PShap = c()
+for(i in 1:ng)
+{
+  S1=QD[i,1:46]
+  S2=QD[i,47:80]
+  S3=QD[i,81:102]
+  S4=QD[i,103:115]
+  S5= QD[116:130]
+  
+  if(var(S1)*var(S2)*var(S3)*var(S4)*var(S5)!=0)
+  {
+    T1=shapiro.test(S1)
+    T2=shapiro.test(S2)
+    T3=shapiro.test(S3)
+    T4=shapiro.test(S4)
+    T5=shapiro.test(S5)
+    PShap[i]=min(T1$p.value,T2$p.value, T3$p.value, T4$p.value, T5$p.value)
+  }
+}
+
+```
+```{r}
+# Shapiro test
+cat("Number of Genes: ",length(which(PShap<alpha)))
+```
+34558 out of 54675 hypotheses were rejected i.e. 34558 out of 54675 genes do not come from a normal population.
+
+```{r, echo = FALSE}
+nrejg=r[which(PShap<alpha)]
+naccg=r[which(PShap>=alpha)]
+
+NRej = as.matrix(which(PShap<=alpha))
+RejG = as.matrix(QD[nrejg,])
+AccG = as.matrix(QD[naccg,])
+
+rownames(RejG) = nrejg
+rownames(AccG) = naccg
+```
+
+```{r, echo = FALSE}
+# Kruskal-Wallis for Normality rejected genes (nrejG)
+KMat = matrix(nrow=nrow(RejG),ncol=2)
+tr = factor(rep(c("E", "G", "M", "N", "P"), c(46, 34, 22, 13, 15)))
+
+for (i in 1: nrow(RejG))
+{
+  kw = kruskal.test(RejG[i, ], tr)
+  KMat[i, ] = c(kw$statistic, kw$p.value)
+}
+kwrejg = nrejg[which(KMat[,2]<=alpha)]
+KRej = QD[kwrejg, ]
+kwaccg=nrejg[which(KMat[,2]>alpha)]
+```
+
+```{r}
+# Kruskal-Wallis for Normality rejected genes
+cat("Number of Genes: ",length(which(KMat[,2]<=alpha)))
+```
+23217 genes rejected i.e. 23217 genes are differentially expressed for at least one of the 5 groups.
+
+```{r, echo = FALSE}
+# Pairwise Wilcoxon on rejected hypotheses.
+PWilcox = matrix(nrow = nrow(KRej), ncol = 10)
+for (i in 1:nrow(KRej))
+{
+  val = c(KRej[i, 1:46], KRej[i, 47:80], KRej[i, 81:102], KRej[i,103:115], KRej[i, 116:130])
+  pw = suppressWarnings(pairwise.wilcox.test(val, tr, p.adjust.method = "none"))
+  PWilcox[i, ] = c(pw$p.value[1], pw$p.value[2], pw$p.value[3], 
+                   pw$p.value[4], pw$p.value[6], pw$p.value[7], 
+                   pw$p.value[8], pw$p.value[11],pw$p.value[12], 
+                   pw$p.value[16])
+}
+colnames(PWilcox) = c("EG", "EM", "EN", "EP", "GM", "GN", "GP", "MN", "MP", "NP")
+View(PWilcox)
+
+
+RW_eg = kwrejg[which(PWilcox[1]<alpha)]; RW_eg
+RW_en = kwrejg[which(PWilcox[2]<alpha)]; RW_en
+RW_em = kwrejg[which(PWilcox[3]<alpha)]; RW_em
+RW_ep = kwrejg[which(PWilcox[4]<alpha)]; RW_ep
+RW_gm = kwrejg[which(PWilcox[5]<alpha)]; RW_gm
+RW_gn = kwrejg[which(PWilcox[6]<alpha)]; RW_gn
+RW_gp = kwrejg[which(PWilcox[7]<alpha)]; RW_gp
+RW_mn = kwrejg[which(PWilcox[8]<alpha)]; RW_mn
+RW_mp = kwrejg[which(PWilcox[9]<alpha)]; RW_mp
+RW_np = kwrejg[which(PWilcox[10]<alpha)]; RW_np
+npbm=Reduce(union, list(RW_eg, RW_en, RW_em, RW_ep, RW_gm, RW_gn, RW_gp, RW_mn, RW_mp, RW_np))
+```
+```{r}
+# Pairwise Wilcoxon on rejected hypotheses.
+cat("Gene: ",npbm, "\nNumber of Genes: ",length(KMat[,2]<=alpha))
+``` 
+"1007_s_at" is the differentially expressed gene obtained after performing pairwise Wilcoxon test.
+
+```{r}
+# Bartlett and ANOVA on normality accepted genes
+cat("Number of Genes: ",length(which(PShap>=alpha)))
+```
+We will perform Bartlett's test and thereby ANOVA and Welch ANOVA on these 20117 genes.
+
+```{r, echo = FALSE}
+# Bartlett and ANOVA on normality accepted genes
+PBart = c()
+PWelchA = PAnova = rep(NA, nrow(AccG))
+PWelchStat = PAnovaStat = rep(NA, nrow(AccG))
+
+for (i in 1: nrow(AccG))
+{
+  BT = bartlett.test(AccG[i, ], rep(c("E", "G", "M", "N", "P"), c(46, 34, 22, 13, 15)))
+  PBart[i] = BT$p.value
+  val = c(AccG[i, 1:46], AccG[i, 47:80], AccG[i, 81:102], AccG[i, 103:115], AccG[i, 116:130])
+  
+  if (PBart[i] <= alpha)
+  {
+    WA = oneway.test(val ~ tr, var.equal = FALSE)
+    PWelchA[i] = WA$p.value
+    PWelchStat[i] = WA$statistic
+  }
+  if (PBart[i] > alpha)
+  {
+    A = oneway.test(val ~ tr, var.equal = TRUE)
+    PAnova[i] = A$p.value
+    PAnovaStat[i] = A$statistic
+  }
+}
+#Bartlett test gene counts
+brejg = naccg[which(PBart <= alpha)]
+baccg = naccg[which(PBart > alpha)]
+#Welch Anova test gene counts
+warejg = brejg[which(PWelchA[which(PBart <= alpha)] <= alpha)]
+waaccg = brejg[which(PWelchA[which(PBart <= alpha)] > alpha)]
+#Anova test gene counts
+arejg = baccg[which(PAnova[which(PBart > alpha)] <= alpha)]
+aaccg = baccg[which(PAnova[which(PBart > alpha)] > alpha)]
+
+length(which(PWelchA<=alpha)) + length(which(PAnova<=alpha))
+# 14486 Genes rejected
+WARej = QD[warejg, ]
+AnovaRej = QD[arejg, ]
+```
+
+```{r}
+cat("Bartlett test gene count\nNumber of Accepted Genes: ", length(baccg), "\nNumber of Rejected Genes: ", length(brejg), "\n\nWelch ANOVA test gene count\nNumber of Accepted Genes: ", length(waaccg), "\nNumber of Rejected Genes: ", length(warejg), "\n\nANOVA test gene count\nNumber of Accepted Genes: ", length(aaccg), "\nNumber of Rejected Genes: ", length(arejg))
+```
+We will perform pairwise t and Welch t test for ANOVA and Welch ANOVA rejected genes respectively.
+
+```{r,echo=FALSE}
+# Pairwise Welch t for Welch Anova Rejected Genes
+PWA = matrix(nrow = nrow(WARej), ncol = 10)
+for (i in 1: nrow(WARej))
+{
+  val = c(WARej[i, 1:46], WARej[i, 47:80], WARej[i, 81:102], WARej[i,103:115], WARej[i, 116:130])
+  pwWT = pairwise.t.test(val, tr, adjust.method = "none", var.equal = FALSE)
+  PWA[i, ] = c(pwWT$p.value[1], pwWT$p.value[2], pwWT$p.value[3], 
+               pwWT$p.value[4], pwWT$p.value[6], pwWT$p.value[7], 
+               pwWT$p.value[8], pwWT$p.value[11],pwWT$p.value[12], 
+               pwWT$p.value[16])
+}
+colnames(PWA) = c("EG", "EM", "EN", "EP", "GM", "GN", "GP", "MN", "MP", "NP")
+
+RW_eg1 = warejg[which(PWA[1]<alpha)]; RW_eg1
+RW_en1 = warejg[which(PWA[2]<alpha)]; RW_en1
+RW_em1 = warejg[which(PWA[3]<alpha)]; RW_em1
+RW_ep1 = warejg[which(PWA[4]<alpha)]; RW_ep1
+RW_gm1 = warejg[which(PWA[5]<alpha)]; RW_gm1
+RW_gn1 = warejg[which(PWA[6]<alpha)]; RW_gn1
+RW_gp1 = warejg[which(PWA[7]<alpha)]; RW_gp1
+RW_mn1 = warejg[which(PWA[8]<alpha)]; RW_mn1
+RW_mp1 = warejg[which(PWA[9]<alpha)]; RW_mp1
+RW_np1 = warejg[which(PWA[10]<alpha)]; RW_np1
+vvbm = Reduce(union, list(RW_eg1, RW_en1, RW_em1, RW_ep1, RW_gm1, RW_gn1, RW_gp1, RW_mn1, RW_mp1, RW_np1))
+```
+```{r,echo=FALSE}
+# Pairwise Welch t for Welch Anova Rejected Genes
+cat("Gene: ", vvbm, "\nNumber of Genes: ",length(warejg))
+```
+"1552257_a_at" is the differential;y expressed gene obtained after performing pairwise Welch t-tests.
+
+```{r,echo=FALSE}
+# Pairwise t for Anova Rejected Genes
+PtA = matrix(nrow = nrow(AnovaRej), ncol = 10)
+for (i in 1: nrow(AnovaRej))
+{
+  val = c(AnovaRej[i, 1:46], AnovaRej[i, 47:80], AnovaRej[i, 81:102], AnovaRej[i,103:115], AnovaRej[i, 116:130])
+  pwT = pairwise.t.test(val, tr, adjust.method = "none", var.equal = FALSE)
+  PtA[i, ] = c(pwT$p.value[1], pwT$p.value[2], pwT$p.value[3], 
+               pwT$p.value[4], pwT$p.value[6], pwT$p.value[7], 
+               pwT$p.value[8], pwT$p.value[11],pwT$p.value[12], 
+               pwT$p.value[16])
+}
+colnames(PtA) = c("EG", "EM", "EN", "EP", "GM", "GN", "GP", "MN", "MP", "NP")
+
+RW_eg2 = arejg[which(PtA[1]<alpha)]; RW_eg2
+RW_en2 = arejg[which(PtA[2]<alpha)]; RW_en2
+RW_em2 = arejg[which(PtA[3]<alpha)]; RW_em2
+RW_ep2 = arejg[which(PtA[4]<alpha)]; RW_ep2
+RW_gm2 = arejg[which(PtA[5]<alpha)]; RW_gm2
+RW_gn2 = arejg[which(PtA[6]<alpha)]; RW_gn2
+RW_gp2 = arejg[which(PtA[7]<alpha)]; RW_gp2
+RW_mn2 = arejg[which(PtA[8]<alpha)]; RW_mn2
+RW_mp2 = arejg[which(PtA[9]<alpha)]; RW_mp2
+RW_np2 = arejg[which(PtA[10]<alpha)]; RW_np2
+
+cvbm = Reduce(union, list(RW_eg2, RW_en2, RW_em2, RW_ep2, RW_gm2, RW_gn2, RW_gp2, RW_mn2, RW_mp2, RW_np2))
+```
+```{r}
+# Pairwise t for Anova Rejected Genes
+cat("Gene: ", cvbm, "\nNumber of Genes: ",length(arejg))
+```
+"1487_at" is the differentially expressed gene obtained after performing pairwise t-tests. 
+
+**Overview of tests used:**
+
+1. **Shapiro Test:** Used to check normality (Failing to reject the null hypothesis suggests that all the groups come from a normal population)
+
+2. **Bartlett Test:** Used to check homoscedasticity (Failing to reject the hull hypothesis suggests that all the groups have homoscedasticity)
+
+3. **Kruskal Wallis Test**, **ANOVA**, **Welch ANOVA**: Used to test if average gene expression value for each group is same. (Rejection of the null hypothesis is desired).
+
+4. **Pairwise Wilcoxon Test**, **Pairwise t test**, **Pairwise Welch t test**: Used to test if average gene expression value for two group is same. (Rejection of the null hypothesis is desired).
+
+```{r}
+# Final Biomarkers
+biomarkers=c(npbm,vvbm,cvbm)
+cat("Biomarkers: ", biomarkers, sep = c("",rep(" , ",3)))
+```
+Based on these inference procedure, we have the following 3 genes as potential biomarkers: 
+
+1. 1007_s_at: DDR1 (Discoidin Domain Receptor 1)
+
+2. 1552257_a_at: TTLL12 (Tubulin Tyrosine Ligase-Like 12)
+
+3. 1487_at: CTBP1 (C-terminal Binding Protein 1)
+
+
+Before proceeding any further, let us try to understand the roles of these genes and assess whether their selection as biomarkers is biologically meaningful.
+
+1. **1007_s_at: DDR1 (Discoidin Domain Receptor 1)**
+DDR1 is a type of protein found on the surface of cells. It becomes active when it comes into contact with collagen, a major part of our body’s connective tissue. Once activated, DDR1 sends signals inside the cell that help control growth and movement of cells. DDR1 is commonly found in increased levels in several types of cancer. Its signaling can promote tumor growth and help cancer cells invade surrounding tissues.
+
+2. **1552257_a_at: TTLL12 (Tubulin Tyrosine Ligase-Like 12)**
+TTLL12 is part of a family of proteins that help modify microtubules—tiny structures inside cells that act like tracks for moving things around and also help the cell divide. Since it helps with important cell processes like cell division, unusual activity of this gene might play a role in cancer development.
+
+3. **1487_at: CTBP1 (C-terminal Binding Protein 1)**
+CTBP1 is a protein that helps turn off certain genes by working with other proteins. It plays an important role in deciding whether a cell grows, dies, or stays the same by controlling gene activity behind the scenes.  CTBP1 is involved in many cancers as it can silence genes that would normally stop tumor growth or tell damaged cells to die. When CTBP1 is too active, it can help cancer cells survive and multiply.
+
+Thus, it is safe to say that these genes stand as sensible choices for potential biomarkers.
+
+Now that we have identified potential biomarkers, our next task is to study their direction of influence on cancer development. If possible, we would also like to devise a rule or a guideline that can help determine whether an individual is at a risk of brain cancer, and if so, identify which one of these 4 types of brain cancer he/she is most susceptible to.
+
+Suppose, we are given gene expression values for these 3 genes (biomarkers) for an individual. We would first like to check if this individual is susceptible to brain cancer or not. In other words we would like to classify this observation (gene expression value for this person) in one of the 2 groups - (Brain) Cancerous & Non-(Brain)Cancerous. Since we are dealing with 2 groups, we can use logistic regression for the same.
+
+```{r,echo=FALSE}
+# Logistic Regression for classifying non-cancerous and cancerous groups
+suppressWarnings(library(pROC))
+
+bmd=QD[biomarkers,]
+d11=t(bmd)
+y=c(rep(0,46),rep(0,34),rep(0,22),rep(1,13),rep(0,15))
+xx=c("x1","x2","x3")
+colnames(d11)=xx
+d11=cbind(d11,y)
+d11=data.frame(d11)
+```
+
+Sensitivity or True Positive Rate is the probability that the model will classify a true positive observation as a positive observation. Whereas, specificity or True Negative Rate is the probability that the model will classify a true negative observation as a negative observation.
+We use ROC (Receiver Operating Characteristic) curve and AUC to examine if our logistic model is a good fit or not. ROC curve is basically a plot of Sensitivity vs Specificity and AUC is the area under the ROC curve. If our value of AUC is close to 1, then we say that the underlying Logistic model is a good fit.
+
+```{r}
+# Logistic Regression for classifying non-cancerous and cancerous groups
+model1=glm(y~x1+x2+x3,data=d11,family="binomial")
+prob=predict(model1, type = "response")
+roc_obj=roc(d11$y, prob)   
+plot(roc_obj, col = "blue", main = "ROC Curve")
+```
+```{r}
+cutoff=coords(roc_obj, "best", ret = "threshold")
+cat("Area under the curve: ", auc(roc_obj))
+```
+Thus, we can safely say that our Logistic model is a good fit.
+
+```{r}
+# Threshold
+cat("Cutoff: ", unlist(cutoff))
+```
+For the classification rule, we select the cutoff value for which both, sensitivity and specificity are high.
+
+**Classification rule:**
+We define the classification rule as follows:
+$$
+y =
+\begin{cases}
+0, & \text{if } p_{\underline{x}} < \text{0.0991748} \\
+1, & \text{if } p_{\underline{x}} \geq \text{0.0991748}
+\end{cases}
+$$
+
+Based on gene expression values of a particular individual, Y = 0 means that individual is likely to have brain cancer, whereas Y = 1 means that the individual is unlikely to develop brain cancer and $p_{\underline{x}}$ is probability that the given individual doesn't have brain cancer. 
+
+
+```{r}
+s1=summary(model1)
+a11=anova(model1, test = "Chisq")
+
+cat("p values of LRT for checking adequacy of model: \n" ,a11$`Pr(>Chi)`, sep = c("", rep(" , ", 3)))
+```
+Observe that, p value corresponding to "1552257_a_at" gene is 0.967659 > 0.05(los). This suggests that "1552257_a_at" gene doesn't contribute significantly to the logistic regression model. 
+
+```{r}
+model2 = glm(y~x1+x3,data=d11,family="binomial")
+s2=summary(model2)
+cat("AIC for model with 1552257_a_at gene: ", s1$aic, "\nAIC for model without 1552257_a_at gene: ",s2$aic)
+```
+Observe that, after removing "1552257_a_at" gene from our model, AIC (Akaike Information Criterion, a relative measure used to assess model adequacies) increases. This is due to suppression effect. 
+Suppression effect in when a variable that appears unimportant on its own (i.e. not statistically significant), but actually improves the predictive power of the model when included with other variables. Here, we observe suppression effect due to "1552257_a_at" gene. 
+
+Suppose, we classify this individual in the Cancerous Group. Now that we know that this individual is susceptible to brain cancer, we would like to identify which one these 4 types of brain cancer development is more likely. Principal Component Analysis (PCA) is a technique which may help us in this situation.
+
+```{r, echo = FALSE}
+d22 = t(bmd)
+d22 = d22[-(103:115), ]
+d22 = data.frame(d22)
+p3 = princomp(d22)
+k1 = c(rep("E", 46), rep("G", 34), rep("M", 22), rep("P", 15))
+scores <- p3$scores[, 1:3]
+```
+```{r}
+# Principal Component Analysis
+p3$loadings
+```
+Note that the first 2 principal components are explaining about 66.7% variation in the data. Genes "1007_s_at", "1552257_a_at", "X1487_at" are contributing the most to the first, second and third principal components respectively. 
+
+```{r}
+# Principal Component Analysis - Biplot
+biplot(p3, xlabs = k1, cex = 0.6, main = "Biplot")
+```
+It seems that it is possible to differentiate group M i.e. Medulloblastoma with other cancer groups using PCA. We will take the two principal components, PC1 and PC2 as regressors and use logistic regression to find the best fitted line that would separate group M from the other cancer groups.
+
+```{r, echo = FALSE}
+# Logistic Regression
+d123=p3$scores
+y2=ifelse(k1 == "M", 1, 0)
+df=data.frame(PC1 = scores[,1], PC2 = scores[,2], group = y2)
+```
+
+```{r}
+# Logistic regression
+m1235=glm(group ~ PC1 + PC2, data = df, family = "binomial", maxit = 100)
+summary(m1235)
+prob1=predict(m1235, type = "response")
+roc_obj1=roc(df$group, prob1)
+cat("Area under the curve: ", auc(roc_obj1))
+```
+AUC of 0.97 suggests that our logistic model is a good fit.
+
+```{r, echo = FALSE}
+coefs=coef(m1235)
+a=-coefs["PC1"] / coefs["PC2"]
+b=-coefs["(Intercept)"] / coefs["PC2"]
+```
+```{r include_biplot, echo=FALSE, out.width="70%"}
+knitr::include_graphics("D:/MSc Statistcs SPPU/SEM II/Microarray/Assignments/biplot.png")
+```
+
+
+
+**Classification Rule: **
+In order to check if a particular individual is likely to develop Medulloblastoma, we calculate the PC1 and PC2 values (using that individual's gene expression values) and plot it on the above biplot. If the point corresponding to this individual lies on the side of Medulloblastoma, then we say that the individual is likely to develop Medulloblastoma, else we say that the individual is unlikely to develop Medulloblastoma.
+
+However, observe that there is some misclassification possible.
+
+# Future Scope
+
+1) More powerful pairwise tests like Tuckey's test may yield better results.
+
+2) Integrating techniques like SVM (Support Vector Machine) with PCA may provide us with more clear classification rules.
+
